@@ -14,3 +14,7 @@ class SkillRegistry:
     def notepad(self):
         from agentmx.skills.gui.notepad import NotepadSkill
         return NotepadSkill
+
+    def browser_upload_receipt(self):
+        from agentmx.skills.browser.upload_receipt import BrowserUploadReceiptSkill
+        return BrowserUploadReceiptSkill
