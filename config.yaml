@@ -1,0 +1,41 @@
+mode: full_control
+
+network:
+  default: allow
+  deny_patterns:
+    - "*.onion"
+    - "10.*.*.*"
+    - "192.168.*.*"
+    - "169.254.*.*"
+  bandwidth_kbps: 0
+  dns_pinning: false
+
+execution:
+  allow_admin_elevation: true
+  powershell_language: FullLanguage
+  use_job_objects: false
+  use_appcontainer: false
+  working_dir: ".agentmx/work/{run_id}"
+  allow_write_outside_workdir: true
+  kill_switch_file: ".agentmx/STOP"
+
+skills:
+  hotload_unsigned: true
+  max_new_skill_per_run: 1
+
+gui:
+  dpi_required: null
+  ocr:
+    enabled: true
+    tesseract_path_env: "TESSERACT_PATH"
+
+browser:
+  engine: "playwright-chromium"
+  profile_per_run: true
+  downloads_dir: ".agentmx/work/{run_id}/browser"
+
+approvals:
+  require_for_money_ops: false
+  require_for_registry_ops: false
+  require_for_remote_code: false
+  api_key_required: true
