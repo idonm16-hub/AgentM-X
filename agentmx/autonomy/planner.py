@@ -7,4 +7,10 @@ def plan(task_type: str, payload: Dict[str, Any]) -> Tuple[List[Dict[str, Any]],
         ]
         verification = {"expect_artifacts": ["notepad_output.txt", "receipt.txt"]}
         return steps, verification
+    if task_type == "demo_normalize":
+        steps = [
+            {"action": "run_demo", "args": {}}
+        ]
+        verification = {"expect_artifacts": ["notepad_output.txt.norm.txt"]}
+        return steps, verification
     return [{"action": "noop", "args": {"seconds": 1}}], {"expect_artifacts": []}
