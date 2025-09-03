@@ -11,6 +11,7 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse, PlainTextResponse, FileResponse, StreamingResponse
 from agentmx.core.config import load_config
 from agentmx.core.runner import AgentRunner
+from agentmx.memory import store as mem
 
 app = FastAPI()
 cfg = load_config()
@@ -143,6 +144,12 @@ async def run_logs_stream(run_id: str, request: Request):
                 break
             await asyncio.sleep(0.2)
     return StreamingResponse(_sse_gen(), media_type="text/event-stream")
+
+@app.get("/metrics")
+async def metrics():
+    conn = mem.connect()
+    return mem.metrics(conn)
+
 
 @app.get("/runs/{run_id}/artifacts")
 async def run_artifacts(run_id: str):

@@ -1,0 +1,14 @@
+[Unit]
+Description=AgentM-X Scheduler
+After=network.target
+
+[Service]
+Type=simple
+Environment=AGENTMX_HOME=${AGENTMX_HOME:-/home/ubuntu/AgentM-X}
+WorkingDirectory=%E{AGENTMX_HOME}
+ExecStart=/bin/bash -lc 'cd ${AGENTMX_HOME:-/home/ubuntu/AgentM-X} && uv run python -m agentmx.cli scheduler'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
