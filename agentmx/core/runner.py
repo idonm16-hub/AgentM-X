@@ -1,6 +1,9 @@
 import os
 import json
 import time
+import sys
+import hashlib
+import mimetypes
 from datetime import datetime
 from loguru import logger
 from typing import Optional
@@ -50,10 +53,21 @@ class AgentRunner:
     def add_artifact(self, path: str, kind: str = "file"):
         try:
             path_abs = os.path.abspath(path)
+            size = os.path.getsize(path_abs) if os.path.exists(path_abs) else 0
+            sha256 = None
+            if os.path.exists(path_abs):
+                h = hashlib.sha256()
+                with open(path_abs, "rb") as f:
+                    for chunk in iter(lambda: f.read(8192), b""):
+                        h.update(chunk)
+                sha256 = h.hexdigest()
+            mime, _ = mimetypes.guess_type(path_abs)
             meta = {
                 "path": path_abs,
                 "type": kind,
-                "size": os.path.getsize(path_abs) if os.path.exists(path_abs) else 0,
+                "size": size,
+                "sha256": sha256,
+                "mime": mime or "application/octet-stream",
                 "created_at": datetime.utcnow().isoformat() + "Z",
             }
             arr = self._read_json(self.artifacts_path, [])
@@ -70,9 +84,32 @@ class AgentRunner:
         self.set_status("running", {"task": task})
         try:
             self.audit.record("plan", {"step": "initial", "task": task})
-            while time.time() - start < min(3, timeout):
+            if (task or "") == "demo":
                 self.stop_guard.check()
-                time.sleep(0.2)
+                note_path = None
+                desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+                os.makedirs(desktop, exist_ok=True)
+                note_path = os.path.join(desktop, "notepad_output.txt")
+                if sys.platform.startswith("win"):
+                    NoteCls = self.skills.notepad()
+                    note = NoteCls()
+                    note.open()
+                    note.type_text("hello from agentmx")
+                    note.save_as(note_path)
+                    note.close()
+                else:
+                    with open(note_path, "w", encoding="utf-8") as f:
+                        f.write("hello from agentmx")
+                self.add_artifact(note_path, "note")
+                self.stop_guard.check()
+                BrowserCls = self.skills.browser_upload_receipt()
+                br = BrowserCls(self.downloads_dir)
+                res = br.run(note_path)
+                self.add_artifact(res["path"], "receipt")
+            else:
+                while time.time() - start < min(3, timeout):
+                    self.stop_guard.check()
+                    time.sleep(0.2)
             self.audit.record("run_end", {"status": "success"})
             self.set_status("success")
             return True
