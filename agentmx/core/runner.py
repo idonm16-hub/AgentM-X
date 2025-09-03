@@ -4,7 +4,7 @@ import time
 import sys
 import hashlib
 import mimetypes
-from datetime import datetime
+from datetime import datetime, UTC
 from loguru import logger
 from typing import Optional
 from agentmx.safety.runner import StopFileGuard
@@ -69,7 +69,7 @@ class AgentRunner:
                 "size": size,
                 "sha256": sha256,
                 "mime": mime or "application/octet-stream",
-                "created_at": datetime.utcnow().isoformat() + "Z",
+                "created_at": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
                 "name": os.path.basename(path_abs),
             }
             arr = self._read_json(self.artifacts_path, [])

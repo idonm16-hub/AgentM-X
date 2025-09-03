@@ -6,6 +6,7 @@ import mimetypes
 import threading
 import asyncio
 import datetime
+from contextlib import asynccontextmanager
 from typing import Optional
 from loguru import logger
 from fastapi import FastAPI, Request, HTTPException
@@ -14,14 +15,13 @@ from agentmx.core.config import load_config
 from agentmx.core.runner import AgentRunner
 from agentmx.memory import store as mem
 
-app = FastAPI()
 cfg = load_config()
 def _iso(ts):
     try:
         if ts is None:
             return None
         if isinstance(ts, (int, float)):
-            return datetime.datetime.utcfromtimestamp(ts).isoformat() + "Z"
+            return datetime.datetime.fromtimestamp(ts, datetime.UTC).isoformat().replace("+00:00", "Z")
         if isinstance(ts, str):
             return ts
     except Exception:
@@ -43,8 +43,8 @@ def run_paths(run_id: Optional[str] = None):
         "audit": os.path.join(base, "audit.log") if base else None,
     }
 
-@app.on_event("startup")
-async def _startup():
+@asynccontextmanager
+async def lifespan(app: FastAPI):
     global HOTKEY_THREAD
     stop_path = cfg.get("execution.kill_switch_file", ".agentmx/STOP")
     if sys.platform.startswith("win"):
@@ -56,15 +56,16 @@ async def _startup():
         except Exception as e:
             HOTKEY_THREAD = None
             logger.warning(f"Windows hotkey not available: {e}")
+    try:
+        yield
+    finally:
+        if HOTKEY_THREAD and hasattr(HOTKEY_THREAD, "stop"):
+            try:
+                HOTKEY_THREAD.stop()
+            except Exception:
+                pass
 
-@app.on_event("shutdown")
-async def _shutdown():
-    global HOTKEY_THREAD
-    if HOTKEY_THREAD and hasattr(HOTKEY_THREAD, "stop"):
-        try:
-            HOTKEY_THREAD.stop()
-        except Exception:
-            pass
+app = FastAPI(lifespan=lifespan)
 
 @app.middleware("http")
 async def api_key_guard(request: Request, call_next):

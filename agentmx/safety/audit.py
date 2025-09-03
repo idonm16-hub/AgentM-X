@@ -1,7 +1,7 @@
 import os
 import json
 import hashlib
-from datetime import datetime
+from datetime import datetime, UTC
 from typing import Optional
 
 class AuditLog:
@@ -11,7 +11,7 @@ class AuditLog:
 
     def record(self, event: str, data: dict):
         rec = {
-            "ts": datetime.utcnow().isoformat() + "Z",
+            "ts": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
             "event": event,
             "data": data or {},
             "prev": self.last_hash,

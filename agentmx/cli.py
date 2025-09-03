@@ -63,7 +63,7 @@ def cmd_scheduler(args):
     health = {"queue_depth": 0, "last_tick": None, "poll_interval": poll_interval, "last_success_ts": None, "last_error_count": 0}
     while True:
         try:
-            health["last_tick"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+            health["last_tick"] = __import__("datetime").datetime.now(__import__("datetime").UTC).isoformat().replace("+00:00", "Z")
             try:
                 cur = taskq.connect()
                 health["queue_depth"] = int(cur.execute("SELECT COUNT(1) FROM tasks WHERE status='queued'").fetchone()[0])
@@ -75,6 +75,8 @@ def cmd_scheduler(args):
             nxt = taskq.next_task(conn)
             if not nxt:
                 _append_sched_log(f"{int(time.time())} idle queue_depth={health['queue_depth']}")
+                with open(SCHED_HEALTH, "w", encoding="utf-8") as f:
+                    json.dump(health, f)
                 time.sleep(poll_interval)
                 continue
             task_id, ttype, payload = nxt
@@ -108,7 +110,7 @@ def cmd_scheduler(args):
                     learn_res = sf.maybe_learn(run_id, threshold, score)
                     if learn_res.get("learned"):
                         mem.record_skill(mconn, learn_res["name"], learn_res["test_path"])
-                health["last_success_ts"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+                health["last_success_ts"] = __import__("datetime").datetime.now(__import__("datetime").UTC).isoformat().replace("+00:00", "Z")
                 with open(SCHED_HEALTH, "w", encoding="utf-8") as f:
                     json.dump(health, f)
                 _append_sched_log(f"{int(time.time())} finished task_id={task_id} status={status} score={score:.3f} duration={duration:.3f}s")
