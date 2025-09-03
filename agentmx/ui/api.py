@@ -1,11 +1,15 @@
 import os
+import uuid
+import threading
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
 from agentmx.core.config import load_config
+from agentmx.core.runner import AgentRunner
 
 app = FastAPI()
 cfg = load_config()
 API_KEY_ENV = "AGENTMX_API_KEY"
+RUNS = {}
 
 @app.middleware("http")
 async def api_key_guard(request: Request, call_next):
@@ -26,4 +30,9 @@ async def run_task(payload: dict):
     task = payload.get("task")
     if not task:
         raise HTTPException(400, "task required")
-    return JSONResponse({"accepted": True, "task": task})
+    run_id = str(uuid.uuid4())
+    runner = AgentRunner(cfg, run_id=run_id, net_enabled=True, allow_safety_edit=False)
+    t = threading.Thread(target=runner.execute, args=(task,), kwargs={"timeout": 3600}, daemon=True)
+    t.start()
+    RUNS[run_id] = {"task": task, "status": "running"}
+    return JSONResponse({"accepted": True, "run_id": run_id, "task": task})
