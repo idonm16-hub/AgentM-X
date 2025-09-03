@@ -10,3 +10,12 @@ Quickstart:
 - uv run playwright install --with-deps chromium
 - uv run uvicorn agentmx.ui.api:app --host 127.0.0.1 --port 8937
 - uv run agentmx run "Open Notepad, type text, save to Desktop, upload to dummy site"
+## Windows GUI Skill: Notepad
+
+Validate on Windows 11/Server 2022:
+1) scripts/bootstrap.ps1
+2) copy .env.example .env and set AGENTMX_API_KEY
+3) uv run pytest -q  (Notepad test runs only on Windows)
+4) Quick manual check:
+   - python -c "from agentmx.skills.gui.notepad import NotepadSkill; s=NotepadSkill(); s.open(); s.type_text('hello from agentmx'); import pathlib; p=str(pathlib.Path.home()/ 'Desktop' / 'agentmx-note.txt'); s.save_as(p); s.close(); print(p)"
+   - Verify the file exists and contains the text.

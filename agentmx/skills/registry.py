@@ -10,3 +10,7 @@ class SkillRegistry:
         if not self.can_add():
             raise RuntimeError("max new skills per run exceeded")
         self.new_count += 1
+
+    def notepad(self):
+        from agentmx.skills.gui.notepad import NotepadSkill
+        return NotepadSkill
