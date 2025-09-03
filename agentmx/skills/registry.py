@@ -18,3 +18,7 @@ class SkillRegistry:
     def browser_upload_receipt(self):
         from agentmx.skills.browser.upload_receipt import BrowserUploadReceiptSkill
         return BrowserUploadReceiptSkill
+
+    def text_normalize(self):
+        from agentmx.skills.generated.text_normalize import TextNormalizeSkill
+        return TextNormalizeSkill
