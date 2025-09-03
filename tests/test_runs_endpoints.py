@@ -15,10 +15,10 @@ def test_runs_endpoints_lifecycle(monkeypatch):
         s = c.get(f"/runs/{run_id}/status", headers={"X-API-Key": "k"})
         assert s.status_code == 200
         st = s.json().get("status")
-        if st in ("success", "stopped", "error"):
+        if st in ("completed", "aborted", "failed"):
             break
         time.sleep(0.05)
-    assert st in ("success", "stopped", "error")
+    assert st in ("completed", "aborted", "failed")
     lg = c.get(f"/runs/{run_id}/logs", headers={"X-API-Key": "k"})
     assert lg.status_code == 200
     art = c.get(f"/runs/{run_id}/artifacts", headers={"X-API-Key": "k"})

@@ -5,6 +5,7 @@ import json
 import mimetypes
 import threading
 import asyncio
+import datetime
 from typing import Optional
 from loguru import logger
 from fastapi import FastAPI, Request, HTTPException
@@ -15,6 +16,18 @@ from agentmx.memory import store as mem
 
 app = FastAPI()
 cfg = load_config()
+def _iso(ts):
+    try:
+        if ts is None:
+            return None
+        if isinstance(ts, (int, float)):
+            return datetime.datetime.utcfromtimestamp(ts).isoformat() + "Z"
+        if isinstance(ts, str):
+            return ts
+    except Exception:
+        pass
+    return None
+
 API_KEY_ENV = "AGENTMX_API_KEY"
 RUNS = {}
 HOTKEY_THREAD = None
@@ -108,7 +121,7 @@ async def run_status(run_id: str):
     row = mem.get_run(conn, run_id)
     if not row:
         raise HTTPException(404, "run not found")
-    return {"run_id": row["id"], "status": row["status"], "score": row.get("score"), "duration": row.get("duration")}
+    return {"run_id": row["id"], "status": row["status"], "score": row.get("score"), "duration": row.get("duration"), "created_at": _iso(row.get("created_at"))}
 
 @app.get("/runs/{run_id}/logs")
 async def run_logs(run_id: str):
@@ -167,7 +180,10 @@ async def run_logs_stream(run_id: str, request: Request):
 @app.get("/runs")
 async def list_runs(limit: int = 50, offset: int = 0):
     conn = mem.connect()
-    return {"runs": mem.list_runs(conn, limit=limit, offset=offset)}
+    runs = mem.list_runs(conn, limit=limit, offset=offset)
+    for r in runs:
+        r["created_at"] = _iso(r.get("created_at"))
+    return {"runs": runs}
 
 @app.get("/runs/latest")
 async def latest_run():
@@ -175,6 +191,7 @@ async def latest_run():
     row = mem.latest_run(conn)
     if not row:
         return {"run": None}
+    row["created_at"] = _iso(row.get("created_at"))
     return {"run": row}
 
 @app.get("/runs/{run_id}")
@@ -183,7 +200,11 @@ async def run_detail(run_id: str):
     row = mem.get_run(conn, run_id)
     if not row:
         raise HTTPException(404, "run not found")
-    row["artifacts"] = mem.list_artifacts(conn, run_id)
+    row["created_at"] = _iso(row.get("created_at"))
+    arts = mem.list_artifacts(conn, run_id)
+    for a in arts:
+        a["created_at"] = _iso(a.get("created_at"))
+    row["artifacts"] = arts
     return row
 
 
@@ -201,7 +222,7 @@ async def run_artifacts(run_id: str):
         raise HTTPException(404, "run not found")
     arts = mem.list_artifacts(conn, run_id)
     return {"artifacts": [
-        {"name": a.get("name"), "size": a.get("size"), "sha256": a.get("sha256"), "mime": a.get("mime"), "path": a.get("path"), "created_at": a.get("created_at")}
+        {"name": a.get("name"), "size": a.get("size"), "sha256": a.get("sha256"), "mime": a.get("mime"), "path": a.get("path"), "created_at": _iso(a.get("created_at"))}
         for a in arts
     ]}
 
