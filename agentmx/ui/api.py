@@ -67,6 +67,22 @@ async def api_key_guard(request: Request, call_next):
 async def health():
     return {"status": "ok"}
 
+@app.get("/scheduler/health")
+async def scheduler_health():
+    path = os.path.join(".agentmx", "scheduler.json")
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        data = {}
+    return {
+        "queue_depth": int(data.get("queue_depth")) if data.get("queue_depth") is not None else 0,
+        "last_tick": data.get("last_tick"),
+        "poll_interval_sec": int(data.get("poll_interval")) if data.get("poll_interval") is not None else None,
+        "last_success_ts": data.get("last_success_ts"),
+        "last_error_count": int(data.get("last_error_count")) if data.get("last_error_count") is not None else 0,
+    }
+
 @app.post("/run")
 async def run_task(payload: dict):
     task = payload.get("task")
@@ -77,20 +93,22 @@ async def run_task(payload: dict):
     t = threading.Thread(target=runner.execute, args=(task,), kwargs={"timeout": 3600}, daemon=True)
     t.start()
     RUNS[run_id] = {"task": task, "workdir": runner.workdir}
+    conn = mem.connect()
+    try:
+        mem.begin(conn)
+        mem.upsert_run(conn, run_id, "running", 0.0, 0.0)
+        mem.commit(conn)
+    except Exception:
+        mem.rollback(conn)
     return JSONResponse({"accepted": True, "run_id": run_id, "task": task})
 
 @app.get("/runs/{run_id}/status")
 async def run_status(run_id: str):
-    info = RUNS.get(run_id)
-    if not info:
+    conn = mem.connect()
+    row = mem.get_run(conn, run_id)
+    if not row:
         raise HTTPException(404, "run not found")
-    p = run_paths(run_id)
-    try:
-        with open(p["status"], "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        data = {"status": "unknown", "run_id": run_id}
-    return data
+    return {"run_id": row["id"], "status": row["status"], "score": row.get("score"), "duration": row.get("duration")}
 
 @app.get("/runs/{run_id}/logs")
 async def run_logs(run_id: str):
@@ -107,7 +125,9 @@ async def run_logs(run_id: str):
 
 @app.get("/runs/{run_id}/logs/stream")
 async def run_logs_stream(run_id: str, request: Request):
-    if RUNS.get(run_id) is None:
+    conn = mem.connect()
+    row = mem.get_run(conn, run_id)
+    if not row:
         raise HTTPException(404, "run not found")
     async def _sse_gen():
         p = run_paths(run_id)
@@ -132,18 +152,41 @@ async def run_logs_stream(run_id: str, request: Request):
             except Exception:
                 pass
             try:
-                with open(p["status"], "r", encoding="utf-8") as sf:
-                    st = (json.load(sf) or {}).get("status", "unknown")
+                cur = mem.get_run(mem.connect(), run_id)
+                st = (cur or {}).get("status") or "unknown"
             except Exception:
                 st = "unknown"
             now = asyncio.get_event_loop().time()
             if now - last_ping >= 12.0:
                 yield "event: ping\ndata: {}\n\n"
                 last_ping = now
-            if st in ("success", "stopped", "error"):
+            if st in ("completed", "aborted", "failed"):
                 break
             await asyncio.sleep(0.2)
     return StreamingResponse(_sse_gen(), media_type="text/event-stream")
+@app.get("/runs")
+async def list_runs(limit: int = 50, offset: int = 0):
+    conn = mem.connect()
+    return {"runs": mem.list_runs(conn, limit=limit, offset=offset)}
+
+@app.get("/runs/latest")
+async def latest_run():
+    conn = mem.connect()
+    row = mem.latest_run(conn)
+    if not row:
+        return {"run": None}
+    return {"run": row}
+
+@app.get("/runs/{run_id}")
+async def run_detail(run_id: str):
+    conn = mem.connect()
+    row = mem.get_run(conn, run_id)
+    if not row:
+        raise HTTPException(404, "run not found")
+    row["artifacts"] = mem.list_artifacts(conn, run_id)
+    return row
+
+
 
 @app.get("/metrics")
 async def metrics():
@@ -153,34 +196,27 @@ async def metrics():
 
 @app.get("/runs/{run_id}/artifacts")
 async def run_artifacts(run_id: str):
-    info = RUNS.get(run_id)
-    if not info:
+    conn = mem.connect()
+    if not mem.get_run(conn, run_id):
         raise HTTPException(404, "run not found")
-    p = run_paths(run_id)
-    try:
-        with open(p["artifacts"], "r", encoding="utf-8") as f:
-            data = json.load(f)
-    except Exception:
-        data = []
-    return {"artifacts": data}
+    arts = mem.list_artifacts(conn, run_id)
+    return {"artifacts": [
+        {"name": a.get("name"), "size": a.get("size"), "sha256": a.get("sha256"), "mime": a.get("mime"), "path": a.get("path"), "created_at": a.get("created_at")}
+        for a in arts
+    ]}
 
 @app.get("/runs/{run_id}/artifact/{name}")
 async def run_artifact_download(run_id: str, name: str):
-    info = RUNS.get(run_id)
-    if not info:
-        raise HTTPException(404, "run not found")
     if ".." in name or "/" in name or "\\" in name:
         raise HTTPException(400, "invalid artifact name")
-    p = run_paths(run_id)
-    try:
-        with open(p["artifacts"], "r", encoding="utf-8") as f:
-            arr = json.load(f)
-    except Exception:
-        arr = []
+    conn = mem.connect()
+    if not mem.get_run(conn, run_id):
+        raise HTTPException(404, "run not found")
+    arts = mem.list_artifacts(conn, run_id)
     target = None
-    for a in arr:
+    for a in arts:
         ap = a.get("path", "")
-        if os.path.basename(ap) == name:
+        if a.get("name") == name or os.path.basename(ap) == name:
             target = ap
             break
     if not target or not os.path.exists(target):

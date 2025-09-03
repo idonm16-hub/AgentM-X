@@ -1,6 +1,7 @@
 import os
 import sqlite3
 import json
+import time
 from typing import Optional, Dict, Any, List, Tuple
 
 DEFAULT_DB = ".agentmx/memory/runs.sqlite"
@@ -14,27 +15,72 @@ def connect(db_path: Optional[str] = None) -> sqlite3.Connection:
     path = db_path or DEFAULT_DB
     _ensure_dir(path)
     conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL;")
     conn.execute("CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, status TEXT, duration REAL, score REAL, created_at REAL)")
     conn.execute("CREATE TABLE IF NOT EXISTS artifacts (run_id TEXT, name TEXT, size INTEGER, sha256 TEXT, mime TEXT)")
+    try:
+        cols = {r[1] for r in conn.execute("PRAGMA table_info(artifacts)").fetchall()}
+        if "path" not in cols:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN path TEXT")
+        if "created_at" not in cols:
+            conn.execute("ALTER TABLE artifacts ADD COLUMN created_at REAL")
+    except Exception:
+        pass
     conn.execute("CREATE TABLE IF NOT EXISTS skills_learned (name TEXT, test_path TEXT, created_at REAL)")
     conn.commit()
     return conn
 
-def record_run(conn: sqlite3.Connection, run_id: str, status: str, duration: float, score: float):
-    conn.execute("INSERT OR REPLACE INTO runs(id,status,duration,score,created_at) VALUES(?,?,?,?,strftime('%s','now'))", (run_id, status, duration, score))
+def begin(conn: sqlite3.Connection):
+    conn.execute("BEGIN")
+
+def commit(conn: sqlite3.Connection):
     conn.commit()
+
+def rollback(conn: sqlite3.Connection):
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+def record_run(conn: sqlite3.Connection, run_id: str, status: str, duration: float, score: float):
+    conn.execute("INSERT OR REPLACE INTO runs(id,status,duration,score,created_at) VALUES(?,?,?,?,COALESCE((SELECT created_at FROM runs WHERE id=?),strftime('%s','now')))", (run_id, status, duration, score, run_id))
+    conn.commit()
+
+def upsert_run(conn: sqlite3.Connection, run_id: str, status: str, duration: float, score: float):
+    conn.execute("INSERT OR REPLACE INTO runs(id,status,duration,score,created_at) VALUES(?,?,?,?,COALESCE((SELECT created_at FROM runs WHERE id=?),strftime('%s','now')))", (run_id, status, duration, score, run_id))
+
+def add_artifact(conn: sqlite3.Connection, run_id: str, artifact: Dict[str, Any]):
+    name = os.path.basename(artifact.get("path","")) or artifact.get("name","")
+    conn.execute("INSERT INTO artifacts(run_id,name,size,sha256,mime,path,created_at) VALUES(?,?,?,?,?,?,?)",
+                 (run_id, name, int(artifact.get("size") or 0), artifact.get("sha256"), artifact.get("mime"), artifact.get("path"), time.time()))
 
 def record_artifacts(conn: sqlite3.Connection, run_id: str, artifacts):
     cur = conn.cursor()
     for a in artifacts or []:
-        cur.execute("INSERT INTO artifacts(run_id,name,size,sha256,mime) VALUES(?,?,?,?,?)",
-                    (run_id, os.path.basename(a.get('path','')), int(a.get('size') or 0), a.get('sha256'), a.get('mime')))
+        cur.execute("INSERT INTO artifacts(run_id,name,size,sha256,mime,path,created_at) VALUES(?,?,?,?,?,?,?)",
+                    (run_id, os.path.basename(a.get('path','')), int(a.get('size') or 0), a.get('sha256'), a.get('mime'), a.get('path'), time.time()))
     conn.commit()
 
 def record_skill(conn: sqlite3.Connection, name: str, test_path: str):
     conn.execute("INSERT INTO skills_learned(name,test_path,created_at) VALUES(?,?,strftime('%s','now'))", (name, test_path))
     conn.commit()
+
+def get_run(conn: sqlite3.Connection, run_id: str) -> Optional[Dict[str, Any]]:
+    row = conn.execute("SELECT id,status,duration,score,created_at FROM runs WHERE id=?", (run_id,)).fetchone()
+    return dict(row) if row else None
+
+def list_runs(conn: sqlite3.Connection, limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    rows = conn.execute("SELECT id,status,duration,score,created_at FROM runs ORDER BY created_at DESC LIMIT ? OFFSET ?", (limit, offset)).fetchall()
+    return [dict(r) for r in rows]
+
+def latest_run(conn: sqlite3.Connection) -> Optional[Dict[str, Any]]:
+    row = conn.execute("SELECT id,status,duration,score,created_at FROM runs ORDER BY created_at DESC LIMIT 1").fetchone()
+    return dict(row) if row else None
+
+def list_artifacts(conn: sqlite3.Connection, run_id: str) -> List[Dict[str, Any]]:
+    rows = conn.execute("SELECT run_id,name,size,sha256,mime,path,created_at FROM artifacts WHERE run_id=? ORDER BY created_at", (run_id,)).fetchall()
+    return [dict(r) for r in rows]
 
 def _score_histogram(rows: List[Tuple[float]]) -> Dict[str, int]:
     buckets = {"0-0.2":0, "0.2-0.4":0, "0.4-0.6":0, "0.6-0.8":0, "0.8-1.0":0, "1.0":0}
@@ -57,9 +103,9 @@ def _score_histogram(rows: List[Tuple[float]]) -> Dict[str, int]:
 
 def metrics(conn: sqlite3.Connection) -> Dict[str, Any]:
     cur = conn.cursor()
-    cur.execute("SELECT COUNT(1) FROM runs WHERE status='success' AND created_at>=strftime('%s','now','-7 days')")
+    cur.execute("SELECT COUNT(1) FROM runs WHERE status='completed' AND created_at>=strftime('%s','now','-7 days')")
     s7 = cur.fetchone()[0]
-    cur.execute("SELECT COUNT(1) FROM runs WHERE status='success' AND created_at>=strftime('%s','now','-30 days')")
+    cur.execute("SELECT COUNT(1) FROM runs WHERE status='completed' AND created_at>=strftime('%s','now','-30 days')")
     s30 = cur.fetchone()[0]
     cur.execute("SELECT AVG(duration) FROM runs WHERE duration IS NOT NULL")
     avg_dur = cur.fetchone()[0] or 0

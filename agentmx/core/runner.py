@@ -12,6 +12,7 @@ from agentmx.safety.policy import SafetyPolicy
 from agentmx.safety.audit import AuditLog
 from agentmx.exec.sandbox import Sandbox
 from agentmx.skills.registry import SkillRegistry
+from agentmx.memory import store as mem
 
 class AgentRunner:
     def __init__(self, config, run_id: str, net_enabled: bool, allow_safety_edit: bool):
@@ -69,10 +70,23 @@ class AgentRunner:
                 "sha256": sha256,
                 "mime": mime or "application/octet-stream",
                 "created_at": datetime.utcnow().isoformat() + "Z",
+                "name": os.path.basename(path_abs),
             }
             arr = self._read_json(self.artifacts_path, [])
             arr.append(meta)
             self._write_json(self.artifacts_path, arr)
+            try:
+                conn = mem.connect()
+                mem.add_artifact(conn, self.run_id, {
+                    "path": meta["path"],
+                    "name": meta["name"],
+                    "size": meta["size"],
+                    "sha256": meta["sha256"],
+                    "mime": meta["mime"],
+                })
+                mem.commit(conn)
+            except Exception:
+                pass
             return meta
         except Exception as e:
             logger.exception(e)
@@ -81,8 +95,13 @@ class AgentRunner:
     def execute(self, task: str, timeout: int = 3600) -> bool:
         start = time.time()
         self.audit.record("run_start", {"task": task, "run_id": self.run_id})
-        self.set_status("running", {"task": task})
         try:
+            try:
+                conn = mem.connect()
+                mem.record_run(conn, self.run_id, "running", 0.0, 0.0)
+            except Exception:
+                pass
+            self.set_status("running", {"task": task})
             self.audit.record("plan", {"step": "initial", "task": task})
             if (task or "") == "demo":
                 self.stop_guard.check()
@@ -110,15 +129,33 @@ class AgentRunner:
                 while time.time() - start < min(3, timeout):
                     self.stop_guard.check()
                     time.sleep(0.2)
-            self.audit.record("run_end", {"status": "success"})
-            self.set_status("success")
+            self.audit.record("run_end", {"status": "completed"})
+            try:
+                conn = mem.connect()
+                duration = max(0.0, time.time() - start)
+                mem.record_run(conn, self.run_id, "completed", duration, 1.0)
+            except Exception:
+                pass
+            self.set_status("completed")
             return True
         except StopFileGuard.Stopped:
-            self.audit.record("run_end", {"status": "stopped"})
-            self.set_status("stopped")
+            self.audit.record("run_end", {"status": "aborted"})
+            try:
+                conn = mem.connect()
+                duration = max(0.0, time.time() - start)
+                mem.record_run(conn, self.run_id, "aborted", duration, 0.0)
+            except Exception:
+                pass
+            self.set_status("aborted")
             return False
         except Exception as e:
             logger.exception(e)
-            self.audit.record("run_end", {"status": "error", "error": str(e)})
-            self.set_status("error", {"error": str(e)})
+            self.audit.record("run_end", {"status": "failed", "error": str(e)})
+            try:
+                conn = mem.connect()
+                duration = max(0.0, time.time() - start)
+                mem.record_run(conn, self.run_id, "failed", duration, 0.0)
+            except Exception:
+                pass
+            self.set_status("failed", {"error": str(e)})
             return False
