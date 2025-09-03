@@ -31,12 +31,13 @@ def cmd_scheduler(args):
             time.sleep(10)
             continue
         task_id, ttype, payload = nxt
+        import uuid, time as _time, os, json
+        run_id = uuid.uuid4().hex
+        start_ts = _time.time()
         try:
+            taskq.mark_running(conn, task_id, run_id)
             steps, verification = planner_mod.plan(ttype, payload)
-            exec_res = executor_mod.execute_steps(cfg, steps)
-            run_id = exec_res.get("run_id")
-            if run_id:
-                taskq.mark_running(conn, task_id, run_id)
+            exec_res = executor_mod.execute_steps(cfg, steps, run_id=run_id)
             workdir = cfg.get("execution.working_dir", f".agentmx/work/{run_id}").format(run_id=run_id)
             eval_res = evaluator_mod.evaluate(workdir, verification)
             score = float(eval_res.get("score") or 0.0)
@@ -47,10 +48,10 @@ def cmd_scheduler(args):
                 threshold = default_thresh
             status = "success" if score >= threshold else "error"
             taskq.mark_status(conn, task_id, status)
+            duration = max(0.0, _time.time() - start_ts)
             mconn = mem.connect()
-            mem.record_run(mconn, run_id, status, 0.0, score)
+            mem.record_run(mconn, run_id, status, duration, score)
             try:
-                import json, os
                 with open(os.path.join(workdir, "artifacts.json"), "r", encoding="utf-8") as f:
                     arts = json.load(f)
             except Exception:
@@ -63,7 +64,7 @@ def cmd_scheduler(args):
                 learn_res = sf.maybe_learn(run_id, threshold, score)
                 if learn_res.get("learned"):
                     mem.record_skill(mconn, learn_res["name"], learn_res["test_path"])
-        except Exception as e:
+        except Exception:
             taskq.mark_status(conn, task_id, "error")
         time.sleep(10)
 
