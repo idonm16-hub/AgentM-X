@@ -10,6 +10,25 @@ Quickstart:
 - uv run playwright install --with-deps chromium
 - uv run uvicorn agentmx.ui.api:app --host 127.0.0.1 --port 8937
 - uv run agentmx run "Open Notepad, type text, save to Desktop, upload to dummy site"
+
+API (localhost only, requires X-API-Key):
+- POST /run {"task": "..."} -> {"accepted": true, "run_id": "..."}
+- GET /runs/{id}/status -> {"status": "running|success|stopped|error", ...}
+- GET /runs/{id}/logs -> text/plain audit log
+- GET /runs/{id}/artifacts -> {"artifacts":[{"path","type","size","created_at"}]}
+- Swagger: /docs
+
+Artifacts & Workdir:
+- Workdir: .agentmx/work/{run_id}
+- Audit: audit.log (hash-chained)
+- Status: status.json
+- Artifacts: artifacts.json
+- Browser downloads: .agentmx/work/{run_id}/browser
+
+Safety:
+- STOP kill-switch file: .agentmx/STOP (checked during run)
+- Windows global hotkey (Ctrl+Alt+S) writes STOP file (if keyboard lib available)
+
 ## Windows GUI Skill: Notepad
 
 Validate on Windows 11/Server 2022:
